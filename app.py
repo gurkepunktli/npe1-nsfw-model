@@ -2,14 +2,14 @@
 FastAPI application for NSFW Detection API
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
 from pydantic import BaseModel
 from typing import Optional
 import numpy as np
 from PIL import Image
 import io
 import open_clip
+import requests
 import torch
 
 from nsfw_detector import predict_nsfw
@@ -20,17 +20,17 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Constants
+DEFAULT_CLIP_MODEL = "ViT-L/14"
+DEFAULT_OPENCLIP_MODEL = "ViT-L-14"
+
 # Global model storage
 _clip_model = None
 _clip_preprocess = None
-_clip_tokenizer = None
 
 
 class NSFWResponse(BaseModel):
     nsfw_score: float
-    is_nsfw: bool
-    threshold: float
-    message: str
 
 
 class HealthResponse(BaseModel):
@@ -38,9 +38,9 @@ class HealthResponse(BaseModel):
     model_loaded: bool
 
 
-def get_clip_model(model_name: str = "ViT-L-14", pretrained: str = "laion2b_s32b_b82k"):
+def get_clip_model(model_name: str = DEFAULT_OPENCLIP_MODEL, pretrained: str = "laion2b_s32b_b82k"):
     """Load CLIP model (lazy loading)"""
-    global _clip_model, _clip_preprocess, _clip_tokenizer
+    global _clip_model, _clip_preprocess
 
     if _clip_model is None:
         print(f"Loading CLIP model: {model_name} ({pretrained})...")
@@ -50,15 +50,14 @@ def get_clip_model(model_name: str = "ViT-L-14", pretrained: str = "laion2b_s32b
         )
         _clip_model = _clip_model.to(device)
         _clip_model.eval()
-        _clip_tokenizer = open_clip.get_tokenizer(model_name)
         print(f"CLIP model loaded on {device}")
 
-    return _clip_model, _clip_preprocess, _clip_tokenizer
+    return _clip_model, _clip_preprocess
 
 
-def get_image_embedding(image: Image.Image, clip_model_name: str = "ViT-L/14"):
+def get_image_embedding(image: Image.Image):
     """Extract CLIP embedding from image"""
-    model, preprocess, _ = get_clip_model()
+    model, preprocess = get_clip_model()
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     image_tensor = preprocess(image.convert("RGB")).unsqueeze(0).to(device)
@@ -68,6 +67,16 @@ def get_image_embedding(image: Image.Image, clip_model_name: str = "ViT-L/14"):
         embedding = embedding.cpu().numpy().astype("float32")
 
     return embedding
+
+
+def fetch_image_from_url(image_url: str) -> bytes:
+    """Download image bytes from a URL"""
+    try:
+        response = requests.get(image_url, timeout=10)
+        response.raise_for_status()
+        return response.content
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not fetch image_url: {exc}")
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -81,51 +90,43 @@ async def health_check():
 
 @app.post("/analyze", response_model=NSFWResponse)
 async def analyze_image(
-    file: UploadFile = File(...),
-    threshold: float = 0.5,
-    clip_model: str = "ViT-L/14"
+    request: Request,
+    file: Optional[UploadFile] = File(None),
+    image_url: Optional[str] = Form(None)
 ):
     """
-    Analyze an image for NSFW content
-
-    Args:
-        file: Image file to analyze (JPEG, PNG, etc.)
-        threshold: NSFW threshold (default: 0.5)
-        clip_model: CLIP model to use ("ViT-L/14" or "ViT-B/32")
-
-    Returns:
-        NSFW score and classification
+    Analyze an image for NSFW content. Accepts either a direct URL or an uploaded file.
     """
     try:
-        # Validate CLIP model
-        if clip_model not in ["ViT-L/14", "ViT-B/32"]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid clip_model. Must be 'ViT-L/14' or 'ViT-B/32'"
-            )
+        provided_image_url = image_url or request.query_params.get("image_url")
 
-        # Read and validate image
-        contents = await file.read()
+        if file is None and not provided_image_url:
+            raise HTTPException(status_code=400, detail="Provide either an image file or image_url")
+
+        if file is not None and provided_image_url:
+            raise HTTPException(status_code=400, detail="Provide only one of: file or image_url")
+
+        # Read image bytes
+        if provided_image_url:
+            contents = fetch_image_from_url(provided_image_url)
+        else:
+            contents = await file.read()
+
+        # Validate image
         try:
             image = Image.open(io.BytesIO(contents))
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
         # Get CLIP embedding
-        embedding = get_image_embedding(image, clip_model)
+        embedding = get_image_embedding(image)
 
         # Predict NSFW score
-        nsfw_scores = predict_nsfw(embedding, clip_model)
+        nsfw_scores = predict_nsfw(embedding, DEFAULT_CLIP_MODEL)
         nsfw_score = float(nsfw_scores[0][0])
 
-        # Classify based on threshold
-        is_nsfw = nsfw_score >= threshold
-
         return NSFWResponse(
-            nsfw_score=round(nsfw_score, 4),
-            is_nsfw=is_nsfw,
-            threshold=threshold,
-            message="NSFW content detected" if is_nsfw else "Safe content"
+            nsfw_score=round(nsfw_score, 4)
         )
 
     except HTTPException:
@@ -137,8 +138,7 @@ async def analyze_image(
 @app.post("/batch-analyze")
 async def batch_analyze_images(
     files: list[UploadFile] = File(...),
-    threshold: float = 0.5,
-    clip_model: str = "ViT-L/14"
+    threshold: float = 0.5
 ):
     """
     Analyze multiple images for NSFW content
@@ -146,18 +146,11 @@ async def batch_analyze_images(
     Args:
         files: List of image files to analyze
         threshold: NSFW threshold (default: 0.5)
-        clip_model: CLIP model to use
 
     Returns:
         List of NSFW scores and classifications
     """
     try:
-        if clip_model not in ["ViT-L/14", "ViT-B/32"]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid clip_model. Must be 'ViT-L/14' or 'ViT-B/32'"
-            )
-
         results = []
         embeddings = []
         filenames = []
@@ -167,7 +160,7 @@ async def batch_analyze_images(
             try:
                 contents = await file.read()
                 image = Image.open(io.BytesIO(contents))
-                embedding = get_image_embedding(image, clip_model)
+                embedding = get_image_embedding(image)
                 embeddings.append(embedding[0])
                 filenames.append(file.filename)
             except Exception as e:
@@ -179,7 +172,7 @@ async def batch_analyze_images(
         # Batch predict
         if embeddings:
             embeddings_array = np.array(embeddings).astype("float32")
-            nsfw_scores = predict_nsfw(embeddings_array, clip_model)
+            nsfw_scores = predict_nsfw(embeddings_array, DEFAULT_CLIP_MODEL)
 
             for i, (filename, score) in enumerate(zip(filenames, nsfw_scores)):
                 nsfw_score = float(score[0])
