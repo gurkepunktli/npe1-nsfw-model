@@ -59,7 +59,7 @@ docker-compose ps
 
 #### 1. Health Check
 ```bash
-GET http://localhost:8000/health
+GET http://localhost:8101/health
 ```
 
 **Response:**
@@ -72,7 +72,7 @@ GET http://localhost:8000/health
 
 #### 2. Einzelbild analysieren
 ```bash
-POST http://localhost:8000/analyze
+POST http://localhost:8101/analyze
 ```
 
 **Parameter:**
@@ -82,7 +82,7 @@ POST http://localhost:8000/analyze
 
 **Beispiel mit cURL:**
 ```bash
-curl -X POST "http://localhost:8000/analyze?threshold=0.5&clip_model=ViT-L/14" \
+curl -X POST "http://localhost:8101/analyze?threshold=0.5&clip_model=ViT-L/14" \
   -F "file=@/path/to/image.jpg"
 ```
 
@@ -98,7 +98,7 @@ curl -X POST "http://localhost:8000/analyze?threshold=0.5&clip_model=ViT-L/14" \
 
 #### 3. Mehrere Bilder analysieren (Batch)
 ```bash
-POST http://localhost:8000/batch-analyze
+POST http://localhost:8101/batch-analyze
 ```
 
 **Parameter:**
@@ -108,7 +108,7 @@ POST http://localhost:8000/batch-analyze
 
 **Beispiel mit cURL:**
 ```bash
-curl -X POST "http://localhost:8000/batch-analyze?threshold=0.5" \
+curl -X POST "http://localhost:8101/batch-analyze?threshold=0.5" \
   -F "files=@image1.jpg" \
   -F "files=@image2.jpg" \
   -F "files=@image3.jpg"
@@ -142,12 +142,12 @@ curl -X POST "http://localhost:8000/batch-analyze?threshold=0.5" \
 
 Interaktive API-Dokumentation (Swagger UI) verfügbar unter:
 ```
-http://localhost:8000/docs
+http://localhost:8101/docs
 ```
 
 Alternative Dokumentation (ReDoc):
 ```
-http://localhost:8000/redoc
+http://localhost:8101/redoc
 ```
 
 ## Python Beispiel
@@ -157,7 +157,7 @@ import requests
 
 # Einzelbild analysieren
 def analyze_image(image_path, threshold=0.5):
-    url = "http://localhost:8000/analyze"
+    url = "http://localhost:8101/analyze"
     files = {"file": open(image_path, "rb")}
     params = {"threshold": threshold, "clip_model": "ViT-L/14"}
 
@@ -190,12 +190,12 @@ Bei Bedarf anpassen für bessere Performance oder niedrigere Ressourcennutzung.
 
 ### Port-Konfiguration
 
-Standard-Port: `8000`
+Standard-Port: `8101`
 
 Ändern in [docker-compose.yml](docker-compose.yml):
 ```yaml
 ports:
-  - "8080:8000"  # Host:Container
+  - "8080:8101"  # Host:Container
 ```
 
 ## CLIP Modelle

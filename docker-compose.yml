@@ -6,7 +6,7 @@ services:
     container_name: nsfw-detector
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8101:8101"
     volumes:
       - nsfw-models:/app/models
     environment:
@@ -15,7 +15,7 @@ services:
     networks:
       - cloudflare_net
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8101/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
