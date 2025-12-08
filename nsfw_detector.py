@@ -13,16 +13,18 @@ import zipfile
 # Reduce TensorFlow logging noise by default; can be overridden via env var
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
-# Allow overriding model download URLs (useful if GitHub is blocked)
+# Allow overriding model download URLs; includes fallbacks (GitHub + HuggingFace)
 MODEL_URLS = {
-    "ViT-L/14": os.environ.get(
-        "NSFW_MODEL_URL_VIT_L14",
+    "ViT-L/14": [
+        os.environ.get("NSFW_MODEL_URL_VIT_L14"),
         "https://github.com/LAION-AI/CLIP-based-NSFW-Detector/releases/download/v1.0/clip_autokeras_binary_nsfw.zip",
-    ),
-    "ViT-B/32": os.environ.get(
-        "NSFW_MODEL_URL_VIT_B32",
+        "https://huggingface.co/LAION/CLIP-based-NSFW-Detector/resolve/main/clip_autokeras_binary_nsfw.zip",
+    ],
+    "ViT-B/32": [
+        os.environ.get("NSFW_MODEL_URL_VIT_B32"),
         "https://github.com/LAION-AI/CLIP-based-NSFW-Detector/releases/download/v1.0/clip_autokeras_nsfw_b32.zip",
-    ),
+        "https://huggingface.co/LAION/CLIP-based-NSFW-Detector/resolve/main/clip_autokeras_nsfw_b32.zip",
+    ],
 }
 
 
@@ -44,26 +46,39 @@ def load_safety_model(clip_model="ViT-L/14"):
     if clip_model == "ViT-L/14":
         model_dir = os.path.join(cache_folder, "clip_autokeras_binary_nsfw")
         dim = 768
-        model_url = MODEL_URLS["ViT-L/14"]
+        model_urls = [u for u in MODEL_URLS["ViT-L/14"] if u]
     elif clip_model == "ViT-B/32":
         model_dir = os.path.join(cache_folder, "clip_autokeras_nsfw_b32")
         dim = 512
-        model_url = MODEL_URLS["ViT-B/32"]
+        model_urls = [u for u in MODEL_URLS["ViT-B/32"] if u]
     else:
         raise ValueError(f"Unknown clip model: {clip_model}")
 
     if not os.path.exists(model_dir):
-        print(f"Downloading NSFW model for {clip_model} from {model_url} ...")
+        if not model_urls:
+            raise RuntimeError(
+                f"No download URLs configured for {clip_model}. "
+                "Set NSFW_MODEL_URL_VIT_L14/NSFW_MODEL_URL_VIT_B32 or pre-populate the models folder."
+            )
+        print(f"Downloading NSFW model for {clip_model} ...")
         zip_path = os.path.join(cache_folder, f"{os.path.basename(model_dir)}.zip")
 
-        try:
-            urllib.request.urlretrieve(model_url, zip_path)
-        except Exception as exc:
+        last_error = None
+        for url in model_urls:
+            print(f"Attempting download: {url}")
+            try:
+                urllib.request.urlretrieve(url, zip_path)
+                break
+            except Exception as exc:
+                last_error = exc
+                print(f"Download failed from {url}: {exc}")
+                continue
+        else:
             raise RuntimeError(
-                f"Failed to download NSFW model ({clip_model}) from {model_url}: {exc}. "
+                f"Failed to download NSFW model ({clip_model}) from configured URLs. "
                 "Set NSFW_MODEL_URL_VIT_L14/NSFW_MODEL_URL_VIT_B32 to a reachable mirror or "
                 "manually place the model files into the cache folder."
-            ) from exc
+            ) from last_error
 
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(cache_folder)
