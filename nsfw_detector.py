@@ -17,12 +17,14 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 MODEL_URLS = {
     "ViT-L/14": [
         os.environ.get("NSFW_MODEL_URL_VIT_L14"),
-        "https://github.com/LAION-AI/CLIP-based-NSFW-Detector/releases/download/v1.0/clip_autokeras_binary_nsfw.zip",
+        "https://raw.githubusercontent.com/LAION-AI/CLIP-based-NSFW-Detector/main/clip_autokeras_binary_nsfw.zip",
+        "https://github.com/LAION-AI/CLIP-based-NSFW-Detector/raw/main/clip_autokeras_binary_nsfw.zip",
         "https://huggingface.co/LAION/CLIP-based-NSFW-Detector/resolve/main/clip_autokeras_binary_nsfw.zip",
     ],
     "ViT-B/32": [
         os.environ.get("NSFW_MODEL_URL_VIT_B32"),
-        "https://github.com/LAION-AI/CLIP-based-NSFW-Detector/releases/download/v1.0/clip_autokeras_nsfw_b32.zip",
+        "https://raw.githubusercontent.com/LAION-AI/CLIP-based-NSFW-Detector/main/clip_autokeras_nsfw_b32.zip",
+        "https://github.com/LAION-AI/CLIP-based-NSFW-Detector/raw/main/clip_autokeras_nsfw_b32.zip",
         "https://huggingface.co/LAION/CLIP-based-NSFW-Detector/resolve/main/clip_autokeras_nsfw_b32.zip",
     ],
 }
