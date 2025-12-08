@@ -49,12 +49,20 @@ def extract_nsfw_score(raw_scores):
     """
     Convert model output to a single float score.
 
-    Handles outputs shaped as scalar, (N,), or (N, 1).
+    Supports outputs shaped as scalar, (N,), (N,1), or (N,2).
+    For binary classifiers that return two columns, we treat the last column as the NSFW probability.
     """
-    scores = np.array(raw_scores, dtype="float32").reshape(-1)
+    scores = np.array(raw_scores, dtype="float32")
     if scores.size == 0:
         raise HTTPException(status_code=500, detail="NSFW model returned no scores")
-    return float(scores[0])
+
+    # If model returns two columns (e.g., [safe_prob, nsfw_prob]), take the second column.
+    if scores.ndim >= 2 and scores.shape[-1] == 2:
+        nsfw_prob = scores.reshape(-1, 2)[0, 1]
+    else:
+        nsfw_prob = scores.reshape(-1)[0]
+
+    return float(nsfw_prob)
 
 
 def get_clip_model(model_name: str = DEFAULT_OPENCLIP_MODEL, pretrained: str | None = None):
