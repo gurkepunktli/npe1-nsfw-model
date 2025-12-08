@@ -21,8 +21,8 @@ app = FastAPI(
 )
 
 # Constants
-DEFAULT_CLIP_MODEL = "ViT-L/14"
-DEFAULT_OPENCLIP_MODEL = "ViT-L-14"
+DEFAULT_CLIP_MODEL = "ViT-B/32"
+DEFAULT_OPENCLIP_MODEL = "ViT-B-32"
 
 # Global model storage
 _clip_model = None
