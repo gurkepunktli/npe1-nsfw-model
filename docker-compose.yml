@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  nsfw-detector:
+    build: .
+    container_name: nsfw-detector
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - nsfw-models:/app/models
+    environment:
+      - TZ=Europe/Berlin
+      - PYTHONUNBUFFERED=1
+    networks:
+      - cloudflare_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
+networks:
+  cloudflare_net:
+    external: true
+
+volumes:
+  nsfw-models:
+    driver: local
