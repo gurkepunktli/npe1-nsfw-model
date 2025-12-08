@@ -5,6 +5,7 @@ FastAPI application for NSFW Detection API
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
 from pydantic import BaseModel
 from typing import Optional
+import os
 import numpy as np
 from PIL import Image
 import io
@@ -23,6 +24,10 @@ app = FastAPI(
 # Constants
 DEFAULT_CLIP_MODEL = "ViT-B/32"
 DEFAULT_OPENCLIP_MODEL = "ViT-B-32"
+OPENCLIP_PRETRAINED_TAGS = {
+    "ViT-B-32": "openai",            # valid tag for ViT-B-32
+    "ViT-L-14": "laion2b_s32b_b82k"  # previous default for L/14
+}
 
 # Global model storage
 _clip_model = None
@@ -52,9 +57,13 @@ def extract_nsfw_score(raw_scores):
     return float(scores[0])
 
 
-def get_clip_model(model_name: str = DEFAULT_OPENCLIP_MODEL, pretrained: str = "laion2b_s32b_b82k"):
+def get_clip_model(model_name: str = DEFAULT_OPENCLIP_MODEL, pretrained: str | None = None):
     """Load CLIP model (lazy loading)"""
     global _clip_model, _clip_preprocess
+
+    if pretrained is None:
+        # Allow override via env, otherwise pick a known good tag for the given model
+        pretrained = os.environ.get("NSFW_CLIP_PRETRAINED") or OPENCLIP_PRETRAINED_TAGS.get(model_name, "openai")
 
     if _clip_model is None:
         print(f"Loading CLIP model: {model_name} ({pretrained})...")
