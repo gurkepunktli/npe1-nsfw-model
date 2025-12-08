@@ -12,7 +12,7 @@ import open_clip
 import requests
 import torch
 
-from nsfw_detector import predict_nsfw
+from nsfw_detector import predict_nsfw, load_safety_model
 
 app = FastAPI(
     title="NSFW Detector API",
@@ -27,6 +27,7 @@ DEFAULT_OPENCLIP_MODEL = "ViT-L-14"
 # Global model storage
 _clip_model = None
 _clip_preprocess = None
+_safety_model_loaded = False
 
 
 class NSFWResponse(BaseModel):
@@ -36,6 +37,7 @@ class NSFWResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
+    safety_model_loaded: bool = False
 
 
 def extract_nsfw_score(raw_scores):
@@ -81,6 +83,20 @@ def get_image_embedding(image: Image.Image):
     return embedding
 
 
+def warm_models():
+    """
+    Preload CLIP and safety models so the first request does not pay the download/load cost.
+    """
+    global _safety_model_loaded
+    try:
+        get_clip_model()
+        load_safety_model(DEFAULT_CLIP_MODEL)
+        _safety_model_loaded = True
+        print("Model warmup completed")
+    except Exception as exc:
+        print(f"Model warmup failed: {exc}")
+
+
 def fetch_image_from_url(image_url: str) -> bytes:
     """Download image bytes from a URL"""
     try:
@@ -96,7 +112,8 @@ async def health_check():
     """Health check endpoint"""
     return HealthResponse(
         status="healthy",
-        model_loaded=_clip_model is not None
+        model_loaded=_clip_model is not None,
+        safety_model_loaded=_safety_model_loaded
     )
 
 
@@ -218,6 +235,12 @@ async def root():
             "/docs": "API documentation (Swagger UI)"
         }
     }
+
+
+@app.on_event("startup")
+def startup_event():
+    """Ensure models are preloaded when the app starts"""
+    warm_models()
 
 
 if __name__ == "__main__":
