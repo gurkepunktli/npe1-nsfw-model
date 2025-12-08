@@ -31,6 +31,9 @@ OPENCLIP_PRETRAINED_TAGS = {
 # Adjust how we interpret model outputs; set NSFW_SCORE_SOURCE env to override
 # Options: auto (default), col0, col1, invert_single, invertcol0, invertcol1, single
 NSFW_SCORE_SOURCE = os.environ.get("NSFW_SCORE_SOURCE", "auto").lower()
+# Debug flags
+DEBUG_INCLUDE_RAW = os.environ.get("NSFW_INCLUDE_RAW", "").lower() in ("1", "true", "yes")
+DEBUG_LOG_RAW = os.environ.get("NSFW_DEBUG_RAW", "").lower() in ("1", "true", "yes")
 
 # Global model storage
 _clip_model = None
@@ -40,6 +43,7 @@ _safety_model_loaded = False
 
 class NSFWResponse(BaseModel):
     nsfw_score: float
+    raw_scores: Optional[list] = None
 
 
 class HealthResponse(BaseModel):
@@ -130,6 +134,9 @@ def warm_models():
         print("Model warmup completed")
     except Exception as exc:
         print(f"Model warmup failed: {exc}")
+        if DEBUG_LOG_RAW:
+            import traceback
+            traceback.print_exc()
 
 
 def fetch_image_from_url(image_url: str) -> bytes:
@@ -187,10 +194,13 @@ async def analyze_image(
 
         # Predict NSFW score
         nsfw_scores = predict_nsfw(embedding, DEFAULT_CLIP_MODEL)
+        if DEBUG_LOG_RAW:
+            print(f"Raw NSFW scores (single): shape={np.array(nsfw_scores).shape}, values={nsfw_scores}")
         nsfw_score = extract_nsfw_score(nsfw_scores)
 
         return NSFWResponse(
-            nsfw_score=round(nsfw_score, 4)
+            nsfw_score=round(nsfw_score, 4),
+            raw_scores=np.array(nsfw_scores).tolist() if DEBUG_INCLUDE_RAW else None
         )
 
     except HTTPException:
@@ -237,6 +247,8 @@ async def batch_analyze_images(
         if embeddings:
             embeddings_array = np.array(embeddings).astype("float32")
             nsfw_scores = predict_nsfw(embeddings_array, DEFAULT_CLIP_MODEL)
+            if DEBUG_LOG_RAW:
+                print(f"Raw NSFW scores (batch): shape={np.array(nsfw_scores).shape}, first={nsfw_scores[0] if len(nsfw_scores)>0 else 'n/a'}")
 
             for i, (filename, score) in enumerate(zip(filenames, nsfw_scores)):
                 nsfw_score = extract_nsfw_score(score)
@@ -246,7 +258,8 @@ async def batch_analyze_images(
                     "nsfw_score": round(nsfw_score, 4),
                     "is_nsfw": is_nsfw,
                     "threshold": threshold,
-                    "message": "NSFW content detected" if is_nsfw else "Safe content"
+                    "message": "NSFW content detected" if is_nsfw else "Safe content",
+                    "raw_scores": np.array(score).tolist() if DEBUG_INCLUDE_RAW else None
                 })
 
         return {"results": results, "total": len(files), "processed": len(embeddings)}
