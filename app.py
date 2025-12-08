@@ -38,6 +38,18 @@ class HealthResponse(BaseModel):
     model_loaded: bool
 
 
+def extract_nsfw_score(raw_scores):
+    """
+    Convert model output to a single float score.
+
+    Handles outputs shaped as scalar, (N,), or (N, 1).
+    """
+    scores = np.array(raw_scores, dtype="float32").reshape(-1)
+    if scores.size == 0:
+        raise HTTPException(status_code=500, detail="NSFW model returned no scores")
+    return float(scores[0])
+
+
 def get_clip_model(model_name: str = DEFAULT_OPENCLIP_MODEL, pretrained: str = "laion2b_s32b_b82k"):
     """Load CLIP model (lazy loading)"""
     global _clip_model, _clip_preprocess
@@ -123,7 +135,7 @@ async def analyze_image(
 
         # Predict NSFW score
         nsfw_scores = predict_nsfw(embedding, DEFAULT_CLIP_MODEL)
-        nsfw_score = float(nsfw_scores[0][0])
+        nsfw_score = extract_nsfw_score(nsfw_scores)
 
         return NSFWResponse(
             nsfw_score=round(nsfw_score, 4)
@@ -175,7 +187,7 @@ async def batch_analyze_images(
             nsfw_scores = predict_nsfw(embeddings_array, DEFAULT_CLIP_MODEL)
 
             for i, (filename, score) in enumerate(zip(filenames, nsfw_scores)):
-                nsfw_score = float(score[0])
+                nsfw_score = extract_nsfw_score(score)
                 is_nsfw = nsfw_score >= threshold
                 results.append({
                     "filename": filename,
