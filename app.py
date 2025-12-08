@@ -28,6 +28,9 @@ OPENCLIP_PRETRAINED_TAGS = {
     "ViT-B-32": "openai",            # valid tag for ViT-B-32
     "ViT-L-14": "laion2b_s32b_b82k"  # previous default for L/14
 }
+# Adjust how we interpret model outputs; set NSFW_SCORE_SOURCE env to override
+# Options: auto (default), col0, col1, invert_single, invertcol0, invertcol1, single
+NSFW_SCORE_SOURCE = os.environ.get("NSFW_SCORE_SOURCE", "auto").lower()
 
 # Global model storage
 _clip_model = None
@@ -50,17 +53,32 @@ def extract_nsfw_score(raw_scores):
     Convert model output to a single float score.
 
     Supports outputs shaped as scalar, (N,), (N,1), or (N,2).
-    For binary classifiers that return two columns, we treat the last column as the NSFW probability.
+    For binary classifiers that return two columns, we treat the last column as the NSFW probability by default.
+    You can override behavior via NSFW_SCORE_SOURCE env (auto|col0|col1|invert_single|invertcol0|invertcol1|single).
     """
     scores = np.array(raw_scores, dtype="float32")
     if scores.size == 0:
         raise HTTPException(status_code=500, detail="NSFW model returned no scores")
 
+    strategy = NSFW_SCORE_SOURCE
+
     # If model returns two columns (e.g., [safe_prob, nsfw_prob]), take the second column.
     if scores.ndim >= 2 and scores.shape[-1] == 2:
-        nsfw_prob = scores.reshape(-1, 2)[0, 1]
+        two_col = scores.reshape(-1, 2)[0]
+        if strategy == "col0":
+            nsfw_prob = two_col[0]
+        elif strategy in ("invertcol0",):
+            nsfw_prob = 1.0 - two_col[0]
+        elif strategy in ("invertcol1",):
+            nsfw_prob = 1.0 - two_col[1]
+        else:  # default col1
+            nsfw_prob = two_col[1]
     else:
-        nsfw_prob = scores.reshape(-1)[0]
+        single = scores.reshape(-1)[0]
+        if strategy in ("invert_single", "invert"):
+            nsfw_prob = 1.0 - single
+        else:
+            nsfw_prob = single
 
     return float(nsfw_prob)
 
