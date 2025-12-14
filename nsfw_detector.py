@@ -88,8 +88,13 @@ def load_safety_model(clip_model="ViT-L/14"):
         os.remove(zip_path)
         print(f"Model downloaded and extracted to {model_dir}")
 
-    loaded_model = load_model(model_dir, custom_objects=ak.CUSTOM_OBJECTS)
-
+    # The saved AutoKeras models include optimizer state/config; across TF/Keras versions this can break
+    # deserialization (e.g. deprecated optimizer args like `decay`). We only need inference, so skip compile.
+    try:
+        loaded_model = load_model(model_dir, custom_objects=ak.CUSTOM_OBJECTS, compile=False)
+    except TypeError:
+        # Backward compatibility with older TF/Keras that may not support `compile=`.
+        loaded_model = load_model(model_dir, custom_objects=ak.CUSTOM_OBJECTS)
     # Warmup prediction
     loaded_model.predict(np.random.rand(10**2, dim).astype("float32"), batch_size=10**2)
 
