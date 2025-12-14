@@ -22,11 +22,16 @@ app = FastAPI(
 )
 
 # Constants
-DEFAULT_CLIP_MODEL = "ViT-B/32"
-DEFAULT_OPENCLIP_MODEL = "ViT-B-32"
+# LAION safety model variants:
+# - "ViT-L/14" expects 768-dim CLIP ViT-L/14 embeddings
+# - "ViT-B/32" expects 512-dim CLIP ViT-B/32 embeddings
+#
+# For best compatibility with the published LAION weights, use OpenAI-pretrained CLIP weights.
+DEFAULT_CLIP_MODEL = "ViT-L/14"
+DEFAULT_OPENCLIP_MODEL = "ViT-L-14"
 OPENCLIP_PRETRAINED_TAGS = {
     "ViT-B-32": "openai",            # valid tag for ViT-B-32
-    "ViT-L-14": "laion2b_s32b_b82k"  # previous default for L/14
+    "ViT-L-14": "openai"             # use OpenAI weights for compatibility with LAION safety model
 }
 # Adjust how we interpret model outputs; set NSFW_SCORE_SOURCE env to override
 # Options: auto (default), col0, col1, invert_single, invertcol0, invertcol1, single
@@ -117,6 +122,9 @@ def get_image_embedding(image: Image.Image):
 
     with torch.no_grad():
         embedding = model.encode_image(image_tensor)
+        # Match common CLIP embedding convention and LAION training distribution:
+        # L2-normalize embeddings to unit length to avoid score saturation.
+        embedding = torch.nn.functional.normalize(embedding, dim=-1)
         embedding = embedding.cpu().numpy().astype("float32")
 
     return embedding

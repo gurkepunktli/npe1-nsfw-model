@@ -5,7 +5,7 @@ Docker-basierte API fuer die Erkennung von NSFW-Inhalten in Bildern mit dem [LAI
 ## Features
 - FastAPI REST-API
 - Einzel- und Batch-Analyse
-- Festes CLIP-Modell ViT-L/14 (kein Parameter notwendig)
+- Festes CLIP-Modell ViT-L/14 (Embedding-Dimension: 768)
 - Bild per Datei-Upload **oder** direkter URL
 - Health-Check Endpoint
 - Docker & Portainer ready mit persistentem Model-Cache
@@ -157,6 +157,12 @@ print(f"NSFW Score: {result['nsfw_score']}")
 - `TZ`: Zeitzone (default: Europe/Berlin)
 - `PYTHONUNBUFFERED`: Python Buffering (default: 1)
 
+### Optionale Umgebungsvariablen (Debug/Feintuning)
+- `NSFW_CLIP_PRETRAINED`: OpenCLIP weights-tag (Default: `openai` fuer `ViT-L-14`)
+- `NSFW_SCORE_SOURCE`: Wie der Keras-Output zu einem Score gemappt wird (Default: `auto`, Alternativen: `col0`, `col1`, `invert_single`, `invertcol0`, `invertcol1`)
+- `NSFW_DEBUG_RAW`: `1`/`true` loggt Raw-Model-Outputs in die Konsole
+- `NSFW_INCLUDE_RAW`: `1`/`true` gibt `raw_scores` im API-Response zur Diagnose zurueck
+
 ### Ressourcen-Limits (docker-compose.yml)
 - Limit: 4GB
 - Reservation: 2GB
@@ -167,7 +173,7 @@ print(f"NSFW Score: {result['nsfw_score']}")
 
 ## CLIP Modell
 
-Die API nutzt fest das Modell **ViT-L/14** (Embedding-Dimension: 768) fuer hohe Genauigkeit. Eine Modell-Auswahl ist nicht notwendig.
+Die API nutzt fest **ViT-L/14** (Safety-Model) und **ViT-L-14** mit `pretrained=openai` (OpenCLIP) fuer kompatible Embeddings.
 
 ## Troubleshooting
 
