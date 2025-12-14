@@ -14,15 +14,27 @@ import zipfile
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
 # Allow overriding model download URLs; includes fallbacks (GitHub + HuggingFace)
+# Optionally prefer a local mirror first (can include port and/or path prefix).
+_MIRROR_BASE_URL = os.environ.get("NSFW_MODEL_MIRROR_BASE_URL")
+
+
+def _mirror_url(filename: str):
+    if not _MIRROR_BASE_URL:
+        return None
+    return _MIRROR_BASE_URL.rstrip("/") + "/" + filename.lstrip("/")
+
+
 MODEL_URLS = {
     "ViT-L/14": [
         os.environ.get("NSFW_MODEL_URL_VIT_L14"),
+        _mirror_url("clip_autokeras_binary_nsfw.zip"),
         "https://raw.githubusercontent.com/LAION-AI/CLIP-based-NSFW-Detector/main/clip_autokeras_binary_nsfw.zip",
         "https://github.com/LAION-AI/CLIP-based-NSFW-Detector/raw/main/clip_autokeras_binary_nsfw.zip",
         "https://huggingface.co/LAION/CLIP-based-NSFW-Detector/resolve/main/clip_autokeras_binary_nsfw.zip",
     ],
     "ViT-B/32": [
         os.environ.get("NSFW_MODEL_URL_VIT_B32"),
+        _mirror_url("clip_autokeras_nsfw_b32.zip"),
         "https://raw.githubusercontent.com/LAION-AI/CLIP-based-NSFW-Detector/main/clip_autokeras_nsfw_b32.zip",
         "https://github.com/LAION-AI/CLIP-based-NSFW-Detector/raw/main/clip_autokeras_nsfw_b32.zip",
         "https://huggingface.co/LAION/CLIP-based-NSFW-Detector/resolve/main/clip_autokeras_nsfw_b32.zip",

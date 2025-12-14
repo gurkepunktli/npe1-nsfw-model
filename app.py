@@ -4,7 +4,7 @@ FastAPI application for NSFW Detection API
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
 from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Optional
 import os
 import numpy as np
 from PIL import Image
@@ -40,6 +40,10 @@ NSFW_SCORE_SOURCE = os.environ.get("NSFW_SCORE_SOURCE", "auto").lower()
 DEBUG_INCLUDE_RAW = os.environ.get("NSFW_INCLUDE_RAW", "").lower() in ("1", "true", "yes")
 DEBUG_LOG_RAW = os.environ.get("NSFW_DEBUG_RAW", "").lower() in ("1", "true", "yes")
 
+# Optional fallback: use a remote API only if local inference fails.
+SIGHENTINE_API_URL = os.environ.get("SIGHENTINE_API_URL")
+SIGHENTINE_API_TIMEOUT = float(os.environ.get("SIGHENTINE_API_TIMEOUT", "10"))
+
 # Global model storage
 _clip_model = None
 _clip_preprocess = None
@@ -48,13 +52,14 @@ _safety_model_loaded = False
 
 class NSFWResponse(BaseModel):
     nsfw_score: float
-    raw_scores: Optional[list] = None
+    raw_scores: Optional[Any] = None
 
 
 class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
     safety_model_loaded: bool = False
+    sighentine_fallback_configured: bool = False
 
 
 def extract_nsfw_score(raw_scores):
@@ -157,13 +162,55 @@ def fetch_image_from_url(image_url: str) -> bytes:
         raise HTTPException(status_code=400, detail=f"Could not fetch image_url: {exc}")
 
 
+def sighentine_fallback_score(*, image_bytes: bytes | None, image_url: str | None):
+    """
+    Backup-only remote scoring API.
+
+    Expected API behavior:
+    - POST JSON {"image_url": "..."} (preferred if available), OR
+    - POST multipart with "file"
+    - Returns JSON with {"nsfw_score": float}
+    """
+    if not SIGHENTINE_API_URL:
+        raise HTTPException(status_code=503, detail="Local model failed and SIGHENTINE_API_URL is not configured")
+
+    try:
+        if image_url:
+            response = requests.post(
+                SIGHENTINE_API_URL,
+                json={"image_url": image_url},
+                timeout=SIGHENTINE_API_TIMEOUT,
+            )
+        else:
+            if image_bytes is None:
+                raise ValueError("No image bytes available for fallback request")
+            response = requests.post(
+                SIGHENTINE_API_URL,
+                files={"file": ("image", image_bytes, "application/octet-stream")},
+                timeout=SIGHENTINE_API_TIMEOUT,
+            )
+
+        response.raise_for_status()
+        data = response.json() if response.content else {}
+
+        if "nsfw_score" not in data:
+            raise ValueError(f"Unexpected response keys: {sorted(list(data.keys()))}")
+
+        return float(data["nsfw_score"]), data
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Sighentine fallback failed: {exc}")
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint"""
     return HealthResponse(
         status="healthy",
         model_loaded=_clip_model is not None,
-        safety_model_loaded=_safety_model_loaded
+        safety_model_loaded=_safety_model_loaded,
+        sighentine_fallback_configured=bool(SIGHENTINE_API_URL),
     )
 
 
@@ -195,20 +242,38 @@ async def analyze_image(
         try:
             image = Image.open(io.BytesIO(contents))
         except Exception as e:
+            if SIGHENTINE_API_URL:
+                try:
+                    nsfw_score, raw_data = sighentine_fallback_score(
+                        image_bytes=contents, image_url=provided_image_url
+                    )
+                    return NSFWResponse(
+                        nsfw_score=round(nsfw_score, 4),
+                        raw_scores=raw_data if DEBUG_INCLUDE_RAW else None,
+                    )
+                except Exception:
+                    pass
             raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
-        # Get CLIP embedding
-        embedding = get_image_embedding(image)
-
-        # Predict NSFW score
-        nsfw_scores = predict_nsfw(embedding, DEFAULT_CLIP_MODEL)
-        if DEBUG_LOG_RAW:
-            print(f"Raw NSFW scores (single): shape={np.array(nsfw_scores).shape}, values={nsfw_scores}")
-        nsfw_score = extract_nsfw_score(nsfw_scores)
+        # Primary path: local CLIP embedding + LAION safety model.
+        try:
+            embedding = get_image_embedding(image)
+            nsfw_scores = predict_nsfw(embedding, DEFAULT_CLIP_MODEL)
+            if DEBUG_LOG_RAW:
+                print(f"Raw NSFW scores (single): shape={np.array(nsfw_scores).shape}, values={nsfw_scores}")
+            nsfw_score = extract_nsfw_score(nsfw_scores)
+            raw = np.array(nsfw_scores).tolist() if DEBUG_INCLUDE_RAW else None
+        except Exception as exc:
+            if DEBUG_LOG_RAW:
+                print(f"Local inference failed, trying Sighentine fallback: {exc}")
+            nsfw_score, raw_data = sighentine_fallback_score(
+                image_bytes=contents, image_url=provided_image_url
+            )
+            raw = raw_data if DEBUG_INCLUDE_RAW else None
 
         return NSFWResponse(
             nsfw_score=round(nsfw_score, 4),
-            raw_scores=np.array(nsfw_scores).tolist() if DEBUG_INCLUDE_RAW else None
+            raw_scores=raw
         )
 
     except HTTPException:
@@ -236,15 +301,35 @@ async def batch_analyze_images(
         results = []
         embeddings = []
         filenames = []
+        file_bytes = []
 
         # Process all images and get embeddings
         for file in files:
             try:
                 contents = await file.read()
                 image = Image.open(io.BytesIO(contents))
-                embedding = get_image_embedding(image)
-                embeddings.append(embedding[0])
-                filenames.append(file.filename)
+                try:
+                    embedding = get_image_embedding(image)
+                    embeddings.append(embedding[0])
+                    filenames.append(file.filename)
+                    file_bytes.append(contents)
+                except Exception as exc:
+                    if SIGHENTINE_API_URL:
+                        if DEBUG_LOG_RAW:
+                            print(f"Local embedding failed for {file.filename}, trying Sighentine: {exc}")
+                        nsfw_score, raw_data = sighentine_fallback_score(image_bytes=contents, image_url=None)
+                        is_nsfw = nsfw_score >= threshold
+                        results.append({
+                            "filename": file.filename,
+                            "nsfw_score": round(nsfw_score, 4),
+                            "is_nsfw": is_nsfw,
+                            "threshold": threshold,
+                            "message": "NSFW content detected" if is_nsfw else "Safe content",
+                            "raw_scores": raw_data if DEBUG_INCLUDE_RAW else None,
+                            "source": "sighentine_fallback",
+                        })
+                    else:
+                        raise
             except Exception as e:
                 results.append({
                     "filename": file.filename,
@@ -254,21 +339,39 @@ async def batch_analyze_images(
         # Batch predict
         if embeddings:
             embeddings_array = np.array(embeddings).astype("float32")
-            nsfw_scores = predict_nsfw(embeddings_array, DEFAULT_CLIP_MODEL)
-            if DEBUG_LOG_RAW:
-                print(f"Raw NSFW scores (batch): shape={np.array(nsfw_scores).shape}, first={nsfw_scores[0] if len(nsfw_scores)>0 else 'n/a'}")
+            try:
+                nsfw_scores = predict_nsfw(embeddings_array, DEFAULT_CLIP_MODEL)
+                if DEBUG_LOG_RAW:
+                    print(f"Raw NSFW scores (batch): shape={np.array(nsfw_scores).shape}, first={nsfw_scores[0] if len(nsfw_scores)>0 else 'n/a'}")
 
-            for i, (filename, score) in enumerate(zip(filenames, nsfw_scores)):
-                nsfw_score = extract_nsfw_score(score)
-                is_nsfw = nsfw_score >= threshold
-                results.append({
-                    "filename": filename,
-                    "nsfw_score": round(nsfw_score, 4),
-                    "is_nsfw": is_nsfw,
-                    "threshold": threshold,
-                    "message": "NSFW content detected" if is_nsfw else "Safe content",
-                    "raw_scores": np.array(score).tolist() if DEBUG_INCLUDE_RAW else None
-                })
+                for filename, score in zip(filenames, nsfw_scores):
+                    nsfw_score = extract_nsfw_score(score)
+                    is_nsfw = nsfw_score >= threshold
+                    results.append({
+                        "filename": filename,
+                        "nsfw_score": round(nsfw_score, 4),
+                        "is_nsfw": is_nsfw,
+                        "threshold": threshold,
+                        "message": "NSFW content detected" if is_nsfw else "Safe content",
+                        "raw_scores": np.array(score).tolist() if DEBUG_INCLUDE_RAW else None
+                    })
+            except Exception as exc:
+                if not SIGHENTINE_API_URL:
+                    raise
+                if DEBUG_LOG_RAW:
+                    print(f"Local batch inference failed, trying Sighentine fallback: {exc}")
+                for filename, contents in zip(filenames, file_bytes):
+                    nsfw_score, raw_data = sighentine_fallback_score(image_bytes=contents, image_url=None)
+                    is_nsfw = nsfw_score >= threshold
+                    results.append({
+                        "filename": filename,
+                        "nsfw_score": round(nsfw_score, 4),
+                        "is_nsfw": is_nsfw,
+                        "threshold": threshold,
+                        "message": "NSFW content detected" if is_nsfw else "Safe content",
+                        "raw_scores": raw_data if DEBUG_INCLUDE_RAW else None,
+                        "source": "sighentine_fallback",
+                    })
 
         return {"results": results, "total": len(files), "processed": len(embeddings)}
 

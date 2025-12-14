@@ -158,6 +158,9 @@ print(f"NSFW Score: {result['nsfw_score']}")
 - `PYTHONUNBUFFERED`: Python Buffering (default: 1)
 
 ### Optionale Umgebungsvariablen (Debug/Feintuning)
+- `NSFW_MODEL_MIRROR_BASE_URL`: Optionaler lokaler Mirror fuer die Model-Zips (z.B. `http://192.168.100.20` oder `http://192.168.100.20:8080/models`)
+- `SIGHENTINE_API_URL`: Optionaler Fallback-Endpoint (wird nur genutzt, wenn das lokale Modell fehlschlaegt; erwartet Response `{"nsfw_score": ...}`)
+- `SIGHENTINE_API_TIMEOUT`: Timeout in Sekunden fuer den Fallback (Default: `10`)
 - `NSFW_CLIP_PRETRAINED`: OpenCLIP weights-tag (Default: `openai` fuer `ViT-L-14`)
 - `NSFW_SCORE_SOURCE`: Wie der Keras-Output zu einem Score gemappt wird (Default: `auto`, Alternativen: `col0`, `col1`, `invert_single`, `invertcol0`, `invertcol1`)
 - `NSFW_DEBUG_RAW`: `1`/`true` loggt Raw-Model-Outputs in die Konsole
